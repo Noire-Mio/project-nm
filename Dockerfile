@@ -1,5 +1,5 @@
-# 1. 指定基礎映像檔：使用輕量級的 Alpine Linux 搭配 Go 1.21
-FROM golang:1.21-alpine AS builder
+# 1. 指定基礎映像檔
+FROM golang:1.25-alpine AS builder
 
 # 2. 設定容器內的工作目錄
 WORKDIR /app
