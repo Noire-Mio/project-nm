@@ -2,6 +2,7 @@ package utils
 
 import (
 	"context"
+	"log"
 	"project-nm/pkg/database"
 
 	"github.com/redis/go-redis/v9"
@@ -10,23 +11,25 @@ import (
 // ProduceMessage 將訊息發送到 Redis Stream
 func ProduceMessage(streamName string, data map[string]interface{}) (string, error) {
 	ctx := context.Background()
-	
+
 	// XAdd 將資料寫入 Stream，"*" 代表由 Redis 自動產生訊息 ID
 	id, err := database.RDB.XAdd(ctx, &redis.XAddArgs{
 		Stream: streamName,
 		Values: data,
 	}).Result()
-	
+
 	return id, err
 }
 
-// CreateConsumerGroup 建立消費者組 (通常在啟動時執行一次)
+// CreateConsumerGroup 建立消費者組
 func CreateConsumerGroup(streamName, groupName string) {
 	ctx := context.Background()
-	// 從 Stream 的開頭 ($ 代表最新消息, 0 代表從頭開始) 建立組
-	database.RDB.XGroupCreateMkStream(ctx, streamName, groupName, "0")
+	// 使用 database.RDB 確保調用的是初始化後的連線
+	err := database.RDB.XGroupCreateMkStream(ctx, streamName, groupName, "0").Err()
+	if err != nil && err.Error() != "BUSYGROUP Consumer Group name already exists" {
+		log.Printf("[Redis] 建立 Group %s 失敗: %v", groupName, err)
+	}
 }
-
 
 // XAdd: 這是生產者的核心動作。在高併發 API 請求中，我們將非同步任務（例如：發送註冊郵件、日誌分析）寫入 Stream 後立即回應用戶。
 

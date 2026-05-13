@@ -1,6 +1,7 @@
 version: '3.8'
 
 services:
+  # Nginx 作為唯一對外的入口 (Port 80)
   nginx:
     image: nginx:alpine
     container_name: nm-nginx
@@ -10,21 +11,25 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
     depends_on:
       - app
-
+    networks:
+      - nm-network
   app:
     build: .
     container_name: nm-app
-    expose:
-      - "8080"
-      - "9000"
     environment:
       - ENV_MODE=DEV
       - DB_HOST=postgres
+      - DB_PORT=5432     
       - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - SERVER_PORT=8080
     depends_on:
       - postgres
       - redis
+    networks:
+      - nm-network
 
+  # PostgreSQL
   postgres:
     image: postgres:15-alpine
     container_name: nm-postgres
@@ -36,12 +41,25 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - nm-network
 
+  # Redis 
   redis:
     image: redis:7-alpine
     container_name: nm-redis
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - nm-network
+
+networks:
+  nm-network:
+    driver: bridge
 
 volumes:
   postgres_data:
+  redis_data:

@@ -31,6 +31,7 @@ type App struct {
 	DB          *gorm.DB
 	RDB         *redis.Client
 	Trans       *transports.Trans
+	
 }
 
 // Mapper 負責將不同領域的轉換器註冊進 Converter
@@ -87,7 +88,6 @@ func (a *App) Migrate(db *gorm.DB) {
 		panic(err)
 	}
 }
-
 // Serve 啟動單一埠號多協議服務
 func (a *App) Serve(migrateDb *gorm.DB) {
 	a.Migrate(migrateDb)
