@@ -2,6 +2,7 @@ package configs
 
 import (
 	"os"
+	"time"
 )
 
 var config *Config
@@ -23,11 +24,15 @@ type RelationalDB struct {
 
 // RedisConfig
 type RedisConfig struct {
-	Host     string
-	Port     string
-	Password string
-	DB       int
-	PoolSize int // 針對 QPS 2000 建議設為 200-500
+	Host         string
+	Port         string
+	Password     string
+	DB           int
+	PoolSize     int           // 建議設為 200-500
+	DialTimeout  time.Duration // 建立連線超時：避免 Redis 掛掉時，Go 一直死等
+	ReadTimeout  time.Duration // 讀取超時：避免某個 big key 讀太久，卡住 Goroutine
+	WriteTimeout time.Duration // 寫入超時：避免網路塞車時，寫入 Token 一直卡住
+	MinIdleConns int           // 最小閒置連線數：極重要！預熱連線池用的
 }
 
 // TokenConfig
@@ -41,7 +46,7 @@ type TokenConfig struct {
 // Config 專案總合配置
 type Config struct {
 	ProjectID    string
-	ServerPort   string 
+	ServerPort   string
 	JWTSign      string
 	RelationalDB RelationalDB
 	Redis        RedisConfig

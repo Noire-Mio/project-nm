@@ -11,6 +11,10 @@ import (
 	"time"
 
 	"project-nm/pkg/configs"
+	"project-nm/pkg/contexts"
+	"project-nm/pkg/endpoints"
+	"project-nm/pkg/repositories"
+	"project-nm/pkg/services"
 
 	"project-nm/pkg/endpoints/converter"
 	"project-nm/pkg/migrations"
@@ -31,7 +35,6 @@ type App struct {
 	DB          *gorm.DB
 	RDB         *redis.Client
 	Trans       *transports.Trans
-	
 }
 
 // Mapper 負責將不同領域的轉換器註冊進 Converter
@@ -88,6 +91,7 @@ func (a *App) Migrate(db *gorm.DB) {
 		panic(err)
 	}
 }
+
 // Serve 啟動單一埠號多協議服務
 func (a *App) Serve(migrateDb *gorm.DB) {
 	a.Migrate(migrateDb)
@@ -155,7 +159,37 @@ func (a *App) Serve(migrateDb *gorm.DB) {
 }
 
 func initTransport(db *gorm.DB, converter *converter.Converter) *transports.Trans {
-
-	newTrans := &transports.Trans{}
+	newAuthTransport := initAuthTransport(db, converter)
+	newMemberTransport := initMemberTransport(db, converter)
+	newTrans := &transports.Trans{
+		AuthTrans:   newAuthTransport,
+		MemberTrans: newMemberTransport,
+	}
 	return newTrans
+}
+
+func initAuthTransport(db *gorm.DB, converter *converter.Converter) *transports.AuthTransport {
+	return &transports.AuthTransport{
+		Endpoint: &endpoints.AuthEndpoint{
+			Converter: converter,
+			Service:   &services.AuthService{},
+			CtxFactory: &contexts.UserFactory{
+				DB:              db,
+				UserRepoFactory: repositories.NewUserRepo,
+			},
+		},
+	}
+}
+
+func initMemberTransport(db *gorm.DB, converter *converter.Converter) *transports.MemberTransport {
+	return &transports.MemberTransport{
+		Endpoint: &endpoints.MemberEndpoint{
+			Converter: converter,
+			Service:   &services.MemberService{},
+			CtxFactory: &contexts.MemberFactory{
+				DB:                db,
+				MemberRepoFactory: repositories.NewMemberRepo,
+			},
+		},
+	}
 }

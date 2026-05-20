@@ -1,4 +1,4 @@
-package scripts
+package schemas
 
 import (
 	"project-nm/pkg/entities"

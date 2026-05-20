@@ -1,0 +1,214 @@
+package pkg
+
+import (
+	"errors"
+	"fmt"
+	"log"
+	"math/rand"
+	"os"
+	"time"
+
+	"github.com/sirupsen/logrus"
+)
+
+const (
+	SystemName = "pos-backend"
+)
+
+const (
+	TraceLevel     = 1
+	DebugLevel     = 2
+	InfoLevel      = 3
+	NoticeLevel    = 4
+	WarningLevel   = 5
+	ErrorLevel     = 6
+	CriticalLevel  = 7
+	AlertLevel     = 8
+	EmergencyLevel = 9
+)
+
+// LogDetail log 資料明細
+type LogDetail struct {
+	HqNo         *string `json:"hq_no"`         // 總部編號
+	HqName       *string `json:"hq_name"`       // 總部名稱
+	PharmacyNo   *string `json:"pharmacy_no"`   // 門市編號
+	PharmacyName *string `json:"pharmacy_name"` // 門市名稱
+	Identity     *string `json:"identity"`      // 身分別
+	UserId       int     `json:"user_id"`       // 先勁租戶ID
+	UserName     *string `json:"user_name"`     // 使用者姓名
+	Level        int     `json:"level"`         // 日誌等級
+	Title        string  `json:"title"`         // 日誌標題
+	Tag          string  `json:"tag"`           // 日誌標籤
+	Content      string  `json:"content"`       // 日誌內容
+	PharmacyCode string  `json:"pharmacy_code"` // 藥局醫事代碼
+	ClientIP     string  `json:"client_ip"`     // 來源端IP
+}
+
+type IMiddleware interface {
+	// GCP log
+	LogWithGCPFields(detail LogDetail)
+
+	// 監控中心log
+	LogToSupport(detail LogDetail)
+}
+
+type LogMiddleware struct {
+	Logger     *logrus.Logger
+	GrpcClient *grpc_client.SupportGrpcClient
+}
+
+func NewLogMiddleware() *LogMiddleware {
+	logger := logrus.New()
+	logger.SetOutput(os.Stdout)                  // ✅ 寫到 stdout，GCP 會自動收集
+	logger.SetFormatter(&logrus.JSONFormatter{}) // ✅ JSON 格式可讓 GCP Log Explorer 結構化顯示
+	logger.SetLevel(logrus.TraceLevel)
+	return &LogMiddleware{Logger: logger, GrpcClient: grpc_client.NewSupportGrpcClient()}
+}
+
+// LogWithGCPFields gcp 結構的 log
+func (m *LogMiddleware) LogWithGCPFields(detail LogDetail) {
+	fields := map[string]interface{}{}
+
+	if detail.HqNo != nil {
+		fields["hq_no"] = *detail.HqNo
+	}
+
+	if detail.HqName != nil {
+		fields["hq_name"] = *detail.HqName
+	}
+
+	if detail.PharmacyNo != nil {
+		fields["pharmacy_no"] = *detail.PharmacyNo
+	}
+
+	if detail.PharmacyName != nil {
+		fields["pharmacy_name"] = *detail.PharmacyName
+	}
+
+	if detail.Identity != nil {
+		fields["identity"] = *detail.Identity
+	}
+
+	if detail.UserId > 0 {
+		fields["user_id"] = detail.UserId
+	}
+
+	if detail.UserName != nil {
+		fields["user_name"] = *detail.UserName
+	}
+
+	fields["pharmacy_code"] = detail.PharmacyCode
+
+	fields["client_ip"] = "unknown"
+	if detail.ClientIP != "" {
+		fields["client_ip"] = detail.ClientIP
+	}
+
+	fields["level"] = detail.Level
+	fields["title"] = detail.Title
+	fields["tag"] = detail.Tag
+	fields["content"] = detail.Content
+
+	switch detail.Level {
+	case TraceLevel:
+		m.Logger.WithFields(fields).Trace("trace")
+	case DebugLevel:
+		m.Logger.WithFields(fields).Debug("debug")
+	case InfoLevel:
+		m.Logger.WithFields(fields).Info("info")
+	case WarningLevel:
+		m.Logger.WithFields(fields).Warn("warn")
+	case ErrorLevel:
+		m.Logger.WithFields(fields).Error("error")
+	default:
+		m.Logger.WithFields(fields).Info("info")
+	}
+}
+
+// LogToSupport log輸出至監控中心
+func (m *LogMiddleware) LogToSupport(detail LogDetail) {
+	var err error
+	defer func() {
+		// 處理 panic
+		if r := recover(); r != nil {
+			switch e := r.(type) {
+			case string:
+				err = errors.New(e)
+			case error:
+				err = e
+			default:
+				err = errors.New("log輸出至監控中心-例外錯誤")
+			}
+			return
+		}
+		if err != nil {
+			log.Println(err)
+		}
+	}()
+
+	req := &pb.LogRequest{}
+
+	// 生成 8 個隨機字母
+	letters := "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
+	result := make([]byte, 8)
+	for i := range result {
+		result[i] = letters[rand.Intn(len(letters))]
+	}
+
+	happenedAt := time.Now()                                     // 先取得 `time.Time`
+	formattedRFC3339 := happenedAt.Format(time.RFC3339Nano)      // 轉成 RFC3339Nano
+	formattedTimestamp := happenedAt.Format("20060102150405123") // 轉成 yyyyMMddHHmmssfff
+	req.HappenedAt = formattedRFC3339
+	req.LogName = formattedTimestamp[:14] + string(result)
+
+	req.FrontBack = 2
+	req.System = SystemName
+	req.Version = os.Getenv("PIPELINE_ID")
+
+	if detail.HqNo != nil {
+		req.HeadquartersNo = *detail.HqNo
+	}
+
+	if detail.HqName != nil {
+		req.HeadquartersName = *detail.HqName
+	}
+
+	if detail.PharmacyNo != nil {
+		req.PharmacyNo = *detail.PharmacyNo
+	}
+
+	if detail.PharmacyName != nil {
+		req.PharmacyName = *detail.PharmacyName
+	}
+
+	if detail.Identity != nil {
+		req.Identity = *detail.Identity
+	}
+
+	if detail.UserId > 0 {
+		req.UserId = int32(detail.UserId)
+	}
+
+	if detail.UserName != nil {
+		req.UserName = *detail.UserName
+	}
+
+	req.PharmacyCode = detail.PharmacyCode
+
+	req.SourceIp = "unknown"
+	if detail.ClientIP != "" {
+		req.SourceIp = detail.ClientIP
+	}
+
+	req.Tag = detail.Tag
+	req.Title = detail.Title
+	req.Content = detail.Content
+	req.LevelId = int32(detail.Level)
+
+	_, err = m.GrpcClient.UploadLog(req)
+	if err != nil {
+		msg := fmt.Sprintf("GrpcClient.UploadLog Error: %s", err.Error())
+		log.Println(msg)
+		log.Printf("req: %+v", req)
+	}
+}

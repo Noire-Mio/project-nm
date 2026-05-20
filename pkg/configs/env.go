@@ -1,6 +1,9 @@
 package configs
 
-import "os"
+import (
+	"os"
+	"time"
+)
 
 func getConfigByDefault() Config {
 	// 優先嘗試從環境變數讀取，若無則使用預設值
@@ -23,11 +26,15 @@ func getConfigByDefault() Config {
 			MaxLifetime:  30,
 		},
 		Redis: RedisConfig{
-			Host:     getEnv("REDIS_HOST", "localhost"),
-			Port:     "6379",
-			Password: "",
-			DB:       0,
-			PoolSize: 300,
+			Host:         getEnv("REDIS_HOST", "localhost"),
+			Port:         getEnv("REDIS_PORT", "6379"),
+			Password:     getEnv("REDIS_PASSWORD", ""),
+			DB:           0,
+			PoolSize:     300,
+			MinIdleConns: 50,
+			DialTimeout:  5 * time.Second,
+			ReadTimeout:  3 * time.Second,
+			WriteTimeout: 3 * time.Second,
 		},
 		Token: TokenConfig{
 			AccessSecret:  "nm-access-key-32-chars",

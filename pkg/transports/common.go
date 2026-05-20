@@ -7,10 +7,12 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"project-nm/pkg/configs"
 	"project-nm/pkg/contexts"
 	"project-nm/pkg/transports/cores" // 確保此處已定義 ErrorResponse
+	"project-nm/pkg/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
@@ -23,57 +25,6 @@ func AbortAndResponseError(c *gin.Context, statusCode int, message string, err e
 	resp := cores.NewErrorResponse(statusCode, message, err)
 	cores.GenerateGinResponse(c, resp)
 	c.Abort()
-}
-
-// HandleBearerTokenToUserInfo 解析 JWT 到 UserInfo
-func HandleBearerTokenToUserInfo(c *gin.Context) (*contexts.UserInfo, bool) {
-	jwtSign := configs.GetConfig().JWTSign
-	if val, exists := c.Get("user_info"); exists {
-		return val.(*contexts.UserInfo), true
-	}
-
-	authHeader := c.Request.Header.Get("Authorization")
-	parts := strings.Fields(authHeader)
-	if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-		AbortAndResponseError(c, http.StatusUnauthorized, "Unauthorized: Invalid Token Format", nil)
-		return nil, false
-	}
-
-	tokenString := parts[1]
-	tokenClaims, err := jwt.ParseWithClaims(
-		tokenString,
-		&contexts.UserInfo{},
-		func(t *jwt.Token) (interface{}, error) {
-			return []byte(jwtSign), nil
-		},
-	)
-
-	if err != nil {
-		AbortAndResponseError(c, http.StatusUnauthorized, err.Error(), err)
-		return nil, false
-	}
-
-	userInfo := tokenClaims.Claims.(*contexts.UserInfo)
-	c.Set("user_info", userInfo)
-	return userInfo, true
-}
-
-// CheckPermissions 檢查權限 
-func CheckPermissions(c *gin.Context, requiredPermissions []*cores.Permission) bool {
-	userInfo, exists := c.Get("user_info")
-	if !exists {
-		AbortAndResponseError(c, http.StatusUnauthorized, "Unauthorized", nil)
-		return false
-	}
-
-	user := userInfo.(*contexts.UserInfo)
-	for _, req := range requiredPermissions {
-		if !user.Permissions[req.Name] {
-			AbortAndResponseError(c, http.StatusForbidden, "Forbidden: No Permission", nil)
-			return false
-		}
-	}
-	return true
 }
 
 // HandleRequestBody 通用請求體解析與驗證 (支援 Struct 與 Slice)
@@ -201,4 +152,140 @@ func setFieldValue(field reflect.Value, val string) error {
 		field.Set(reflect.ValueOf(d))
 	}
 	return nil
+}
+
+// 處理請求參數1
+func HandleRequestParams(c *gin.Context, v interface{}) (content interface{}, success bool) {
+	t := reflect.TypeOf(v)
+
+	// 確保 `v` 是類型，而不是實例
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+
+	// 判斷是否為 slice
+	isSlice := t.Kind() == reflect.Slice
+
+	// 建立 model
+	var modelPtr interface{}
+	if isSlice {
+		// 如果是 slice，建立一個新的 slice 指標
+		sliceType := reflect.SliceOf(t.Elem()) // 取得 slice 元素類型
+		// sliceValue := reflect.MakeSlice(sliceType, 0, 0)
+		modelPtr = reflect.New(sliceType).Interface() // 生成 slice 的指標
+	} else {
+		// 否則，建立結構體指標
+		modelPtr = reflect.New(t).Interface()
+	}
+	if err := c.Bind(modelPtr); err != nil {
+		AbortAndResponseError(c, http.StatusBadRequest, err.Error(), err)
+		return nil, false
+	}
+	// 取得解析後的數據
+	model := reflect.ValueOf(modelPtr).Elem().Interface()
+
+	validate := validator.New()
+	if err := validate.RegisterValidation("no_special_chars", ValidateNoSpecialChars); err != nil {
+		AbortAndResponseError(c, http.StatusInternalServerError, err.Error(), err)
+		return nil, false
+	}
+	if isSlice {
+		if err := validate.Var(model, "dive"); err != nil {
+			AbortAndResponseError(c, http.StatusBadRequest, err.Error(), nil)
+			return nil, false
+		}
+	} else {
+		if err := validate.Struct(model); err != nil {
+			AbortAndResponseError(c, http.StatusBadRequest, err.Error(), nil)
+			return nil, false
+		}
+	}
+	// content = modelPtr
+	return model, true
+}
+
+func HandleRequestPathParams(c *gin.Context, key string) (string, bool) {
+	param := c.Param(key)
+	if param == "" {
+		AbortAndResponseError(c, http.StatusBadRequest, "Param ["+key+"]"+"is required!", nil)
+		return "", false
+	}
+	return param, true
+}
+
+func ConvertStringToUint(c *gin.Context, param string) (uint, bool) {
+	uintParam, err := strconv.ParseUint(param, 10, 32)
+	if err != nil {
+		AbortAndResponseError(c, http.StatusBadRequest, err.Error(), err)
+		return 0, false
+	}
+	return uint(uintParam), true
+}
+
+func HandleBearerTokenToUserInfo(c *gin.Context) (*contexts.UserInfo, bool) {
+	jwtSign := configs.GetConfig().JWTSign
+	if val, exists := c.Get("user_info"); exists {
+		return val.(*contexts.UserInfo), true
+	}
+
+	authHeader := c.Request.Header.Get("Authorization")
+	parts := strings.Fields(authHeader)
+	if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+		AbortAndResponseError(c, http.StatusUnauthorized, "Unauthorized: Invalid Token Format", nil)
+		return nil, false
+	}
+
+	tokenString := parts[1]
+
+	// 去 Redis 驗證 Token 是否還活著
+	redisUserInfo, err := utils.GetUserToken(tokenString)
+	if err == nil && redisUserInfo != nil {
+		// 如果 Redis 有快取，代表 Token 合法且未被登出，直接放行 ， 省去每次 JWT 解密的 CPU 消耗
+		c.Set("user_info", redisUserInfo)
+		return redisUserInfo, true
+	}
+
+	// 若 Redis 剛好快取過期，但 JWT 本身還在效期內，解密並回補到 Redis
+	tokenClaims, err := jwt.ParseWithClaims(tokenString, &contexts.UserInfo{},
+		func(t *jwt.Token) (interface{}, error) {
+			return []byte(jwtSign), nil
+		},
+	)
+
+	if err != nil {
+		AbortAndResponseError(c, http.StatusUnauthorized, "Unauthorized: Token Expired or Invalid", err)
+		return nil, false
+	}
+
+	userInfo := tokenClaims.Claims.(*contexts.UserInfo)
+
+	// 回補到 Redis 快取中
+	_ = utils.SetUserToken(tokenString, userInfo, 30*time.Minute)
+
+	c.Set("user_info", userInfo)
+	return userInfo, true
+}
+
+// CheckPermissions
+func CheckPermissions(c *gin.Context, requiredPermissions []*cores.Permission) bool {
+	// 解析 JWT
+	userInfoVal, exists := c.Get("user_info")
+	if !exists {
+		AbortAndResponseError(c, http.StatusUnauthorized, "Unauthorized: User info not found", nil)
+		c.Abort()
+		return false
+	}
+
+	user := userInfoVal.(*contexts.UserInfo)
+
+	// 逐一檢查需要的權限
+	for _, req := range requiredPermissions {
+
+		if hasPerm, ok := user.Permissions[req.Name]; !ok || !hasPerm {
+			AbortAndResponseError(c, http.StatusForbidden, "Forbidden: 缺少 ["+req.Name+"] 操作權限", nil)
+			c.Abort()
+			return false
+		}
+	}
+	return true
 }

@@ -28,12 +28,10 @@ func InitRedis(cfg configs.RedisConfig) *redis.Client {
 		PoolSize: cfg.PoolSize,
 
 		// 高併發下的超時設定，防止單一請求卡死連線池
-		DialTimeout:  5 * time.Second,
-		ReadTimeout:  3 * time.Second,
-		WriteTimeout: 3 * time.Second,
-
-		// 連線閒置管理
-		MinIdleConns: 10,
+		DialTimeout:  cfg.DialTimeout,
+		ReadTimeout:  cfg.ReadTimeout,
+		WriteTimeout: cfg.WriteTimeout,
+		MinIdleConns: cfg.MinIdleConns,
 	})
 
 	// 使用 Context 進行連線測試
