@@ -21,7 +21,24 @@ func (t *AuthTransport) Login(permissions ...*cores.Permission) gin.HandlerFunc 
 		}
 
 		response := t.Endpoint.Login(request.(inputmodels.LoginInput))
-		
+
+		cores.GenerateGinResponse(c, response)
+	}
+	return handler
+}
+
+func (t *AuthTransport) RefreshToken(permissions ...*cores.Permission) gin.HandlerFunc {
+	handler := func(c *gin.Context) {
+
+
+
+		request, ok := HandleRequestBody(c, inputmodels.RefreshInput{})
+		if !ok {
+			return
+		}
+
+		response := t.Endpoint.RefreshToken( request.(inputmodels.RefreshInput))
+
 		cores.GenerateGinResponse(c, response)
 	}
 	return handler

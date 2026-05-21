@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"project-nm/pkg/contexts"
 	"project-nm/pkg/endpoints/converter"
+	"project-nm/pkg/endpoints/viewmodels"
 	"project-nm/pkg/services"
 	"project-nm/pkg/transports/cores"
 )
@@ -39,5 +40,10 @@ func (e *MemberEndpoint) GetMember(userInfo *contexts.UserInfo) *cores.Response 
 		return NewErrorResponse(http.StatusInternalServerError, err)
 	}
 
-	return cores.NewResponse(http.StatusOK, Member)
+	respBody := viewmodels.MemberView{
+		ID:      Member.ID,
+		Userame: Member.Username,
+		Balance: Member.Balance,
+	}
+	return cores.NewResponse(http.StatusOK, respBody)
 }

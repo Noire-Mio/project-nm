@@ -6,9 +6,9 @@ import (
 	"project-nm/pkg/entities"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
-// 內部宣告介面
 type MemberFactory func(ctx *GormDBContext) IMember
 
 type IMember interface {
@@ -20,7 +20,6 @@ type MemberRepo struct {
 	GormRepository
 }
 
-// 外部呼叫
 func NewMemberRepo(ctx *GormDBContext) IMember {
 	repository := new(MemberRepo)
 	repository.SetDBContext(ctx)
@@ -40,15 +39,26 @@ func (repo *MemberRepo) Get(schema string, id uint) (bool, *entities.Member, err
 	if err != nil {
 		return false, nil, err
 	}
-
-	// 找到
 	return true, &entity, nil
 }
 
-func (repo *MemberRepo) Create(schema string, entity entities.Member) (*entities.Member, error) {
+func (repo *MemberRepo) Create(schema string, member entities.Member) (*entities.Member, error) {
 	err := repo.DB().
 		Table(fmt.Sprintf("%s.%s", schema, new(entities.Member).TableName())).
-		Create(&entity).Error
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "id"}},
+			DoNothing: true,
+		}).Create(&member).Error
 
-	return &entity, err
+	if err != nil {
+		return nil, err
+	}
+	err = repo.DB().
+		Table(fmt.Sprintf("%s.%s", schema, new(entities.Member).TableName())).
+		First(&member, member.ID).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return &member, nil
 }

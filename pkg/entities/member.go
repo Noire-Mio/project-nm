@@ -15,9 +15,6 @@ type Member struct {
 	Version   int64           `gorm:"default:0" json:"version"`
 }
 
-// InitialPoints 設定會員註冊時的初始點數 (例如 1000 點)
-const InitialPoints = 1000
-
 func (m *Member) TableName() string {
 	return "member"
 }

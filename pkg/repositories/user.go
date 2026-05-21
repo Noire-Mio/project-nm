@@ -9,6 +9,7 @@ type UserFactory func(ctx *GormDBContext) IUser
 type IUser interface {
 	GetActiveUserByAccount(account string) (*entities.User, error)
 	GetPermissionsByUserID(userID uint) ([]entities.UserPermission, error)
+	GetActiveUserByID(id uint) (*entities.User, error)
 }
 
 type UserRepository struct {
@@ -43,4 +44,17 @@ func (r *UserRepository) GetPermissionsByUserID(userID uint) ([]entities.UserPer
 		Where("user_id = ?", userID).
 		Find(&permissions).Error
 	return permissions, err
+}
+
+// GetActiveUserByID 確認帳號狀態
+func (r *UserRepository) GetActiveUserByID(id uint) (*entities.User, error) {
+	var user entities.User
+	err := r.DB().
+		Table("public.users").
+		Where("id = ? AND is_active = ?", id, true).
+		First(&user).Error
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
 }

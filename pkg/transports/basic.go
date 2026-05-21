@@ -28,5 +28,5 @@ func (t *Trans) AuthAPI(e *gin.Engine) {
 	e.POST("auth/login", t.AuthTrans.Login())
 }
 func (t *Trans) MemberAPI(e *gin.Engine) {
-	e.GET("member/:id", t.MemberTrans.GetMember(cores.NewActionPermission(cores.ActionRead)))
+	e.GET("member", t.MemberTrans.GetMember(cores.NewActionPermission(cores.ActionRead)))
 }

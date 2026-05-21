@@ -237,10 +237,19 @@ func HandleBearerTokenToUserInfo(c *gin.Context) (*contexts.UserInfo, bool) {
 
 	tokenString := parts[1]
 
-	// 去 Redis 驗證 Token 是否還活著
+	//  去 Redis 驗證 Token 是否還活著
 	redisUserInfo, err := utils.GetUserToken(tokenString)
 	if err == nil && redisUserInfo != nil {
-		// 如果 Redis 有快取，代表 Token 合法且未被登出，直接放行 ， 省去每次 JWT 解密的 CPU 消耗
+		// 比對時間戳
+		latestLoginTime, err := utils.GetUserLatestLoginTime(redisUserInfo.UserID)
+		if err == nil && redisUserInfo.LoginAt < latestLoginTime {
+			// 如果 Token 登入時間，比 Redis 紀錄的最新時間還要舊， 順手清理殘留快取
+			_ = utils.DeleteUserToken(tokenString)
+			AbortAndResponseError(c, http.StatusUnauthorized, "SESSION_KICKED: 您的帳號已在其他裝置登入，您已被強迫下線", nil)
+			return nil, false
+		}
+
+		// 如果 Redis 有快取且又是最新 Token，代表合法且未被登出，直接放行
 		c.Set("user_info", redisUserInfo)
 		return redisUserInfo, true
 	}
@@ -259,7 +268,15 @@ func HandleBearerTokenToUserInfo(c *gin.Context) (*contexts.UserInfo, bool) {
 
 	userInfo := tokenClaims.Claims.(*contexts.UserInfo)
 
-	// 回補到 Redis 快取中
+	// JWT 解密成功後，也必須校對時間戳，防止殭屍 Token
+	latestLoginTime, err := utils.GetUserLatestLoginTime(userInfo.UserID)
+	if err == nil && userInfo.LoginAt < latestLoginTime {
+		// 雖然 JWT 沒過期，但你是舊的 Token，直接阻斷，不予回補 Redis 快取
+		AbortAndResponseError(c, http.StatusUnauthorized, "SESSION_KICKED: 您的帳號已在其他裝置登入，您已被強迫下線", nil)
+		return nil, false
+	}
+
+	// 通過雙重驗證後，才安全回補到 Redis 快取中
 	_ = utils.SetUserToken(tokenString, userInfo, 30*time.Minute)
 
 	c.Set("user_info", userInfo)

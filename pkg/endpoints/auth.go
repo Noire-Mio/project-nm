@@ -19,6 +19,7 @@ type AuthEndpoint struct {
 }
 type IAuthEndpoint interface {
 	Login(input inputmodels.LoginInput) *cores.Response
+	RefreshToken(input inputmodels.RefreshInput) *cores.Response
 }
 
 // Login
@@ -42,7 +43,25 @@ func (e *AuthEndpoint) Login(input inputmodels.LoginInput) *cores.Response {
 	}
 
 	respBody := viewmodels.LoginView{
-		AccessToken: auth,
+		AccessToken:  auth.AccessToken,
+		RefreshToken: auth.RefreshToken,
+	}
+
+	return cores.NewResponse(http.StatusOK, respBody)
+}
+
+func (e *AuthEndpoint) RefreshToken(input inputmodels.RefreshInput) *cores.Response {
+	ctx := e.CtxFactory.NewAnonymousContext()
+	defer ctx.Dispose() // 釋放context
+
+	auth, err := e.Service.RefreshToken(ctx, dtos.RefreshRequestDto(input))
+	if err != nil {
+		return NewErrorResponse(http.StatusInternalServerError, err)
+	}
+
+	respBody := viewmodels.LoginView{
+		AccessToken:  auth.AccessToken,
+		RefreshToken: auth.RefreshToken,
 	}
 
 	return cores.NewResponse(http.StatusOK, respBody)

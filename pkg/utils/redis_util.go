@@ -3,8 +3,10 @@ package utils
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"project-nm/pkg/contexts"
 	"project-nm/pkg/database"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -41,7 +43,26 @@ func SetUserToken(token string, userInfo *contexts.UserInfo, expiration time.Dur
 	return database.RDB.Set(ctx, key, string(data), expiration).Err()
 }
 
-// GetUserToken
+// GetUserLatestLoginTime 獲取該用戶目前在全網最新登入的時間戳記
+func GetUserLatestLoginTime(userID uint) (int64, error) {
+	ctx := context.Background()
+	key := fmt.Sprintf("user:latest_login_time:%d", userID)
+
+	// 🎯 標準改動：先拿字串，再轉為 int64，避免 go-redis 方法誤用噴錯
+	val, err := database.RDB.Get(ctx, key).Result()
+	if err != nil {
+		return 0, err
+	}
+
+	loginAt, err := strconv.ParseInt(val, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+
+	return loginAt, nil
+}
+
+// GetUserToken 獲取 Token 對應的用戶快取資訊
 func GetUserToken(token string) (*contexts.UserInfo, error) {
 	ctx := context.Background()
 	key := "token:" + token
@@ -60,11 +81,29 @@ func GetUserToken(token string) (*contexts.UserInfo, error) {
 	return &userInfo, nil
 }
 
-// DeleteUserToken 登出時，使 Token 立即失效
+// DeleteUserToken 登出或被剔除時，使 Token 立即失效
 func DeleteUserToken(token string) error {
 	ctx := context.Background()
 	key := "token:" + token
 	return database.RDB.Del(ctx, key).Err()
 }
 
+// BindUserLatestLoginTime 同時綁定時間戳記與長效 Refresh Token
+func BindUserLatestLoginTime(userID uint, loginAt int64, refreshToken string, expiration time.Duration) error {
+	ctx := context.Background()
 
+	// 儲存最新合法時間戳記（你原本寫的）
+	timeKey := fmt.Sprintf("user:latest_login_time:%d", userID)
+	_ = database.RDB.Set(ctx, timeKey, loginAt, expiration).Err()
+
+	// 儲存這台裝置獨佔的最新長效 Refresh Token
+	refreshKey := fmt.Sprintf("user:refresh_token:%d", userID)
+	return database.RDB.Set(ctx, refreshKey, refreshToken, expiration).Err()
+}
+
+// GetServerRefreshToken 獲取該用戶目前全網最新、合法的長效鑰匙
+func GetServerRefreshToken(userID uint) (string, error) {
+	ctx := context.Background()
+	key := fmt.Sprintf("user:refresh_token:%d", userID)
+	return database.RDB.Get(ctx, key).Result()
+}

@@ -9,4 +9,5 @@ type UserInfo struct {
 	Name        string          `json:"name"`        // 使用者姓名
 	Schema      string          `json:"schema"`      // 租戶資料庫 Schema 名稱
 	Permissions map[string]bool `json:"permissions"` // 權限清單
+	LoginAt     int64           `json:"login_at"`    // 登入時間
 }
