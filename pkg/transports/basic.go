@@ -25,7 +25,9 @@ func (t *Trans) HealthCheckAPI(e *gin.Engine) {
 }
 
 func (t *Trans) AuthAPI(e *gin.Engine) {
-	e.POST("auth/login", t.AuthTrans.Login())
+	e.POST("/sessions", t.AuthTrans.Login())
+	e.DELETE("/sessions", t.AuthTrans.Logout())
+	e.PUT("/sessions/refresh", t.AuthTrans.RefreshToken())
 }
 func (t *Trans) MemberAPI(e *gin.Engine) {
 	e.GET("member", t.MemberTrans.GetMember(cores.NewActionPermission(cores.ActionRead)))

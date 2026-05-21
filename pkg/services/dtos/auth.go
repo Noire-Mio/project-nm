@@ -14,3 +14,7 @@ type LoginResponseDto struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 }
+
+type LogoutDto struct {
+	CurrentToken string `json:"current_token" binding:"required"`
+}

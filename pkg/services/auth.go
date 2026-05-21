@@ -18,6 +18,7 @@ import (
 type IAuthService interface {
 	Login(c *contexts.User, dto dtos.LoginDto) (*dtos.LoginResponseDto, error)
 	RefreshToken(c *contexts.User, dto dtos.RefreshRequestDto) (*dtos.LoginResponseDto, error)
+	Logout(c *contexts.User, dto dtos.LogoutDto) error
 }
 
 type AuthService struct{}
@@ -151,3 +152,10 @@ func (s *AuthService) RefreshToken(c *contexts.User, dto dtos.RefreshRequestDto)
 	}, nil
 }
 
+func (s *AuthService) Logout(c *contexts.User, dto dtos.LogoutDto) error {
+	_ = utils.DeleteUserToken(dto.CurrentToken)
+
+	_ = utils.DeleteUserLatestLoginTime(c.UserInfo.UserID)
+
+	return nil
+}

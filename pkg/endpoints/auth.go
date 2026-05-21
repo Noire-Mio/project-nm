@@ -20,6 +20,7 @@ type AuthEndpoint struct {
 type IAuthEndpoint interface {
 	Login(input inputmodels.LoginInput) *cores.Response
 	RefreshToken(input inputmodels.RefreshInput) *cores.Response
+	Logout(userInfo *contexts.UserInfo, input inputmodels.LogoutInput) *cores.Response
 }
 
 // Login
@@ -65,4 +66,16 @@ func (e *AuthEndpoint) RefreshToken(input inputmodels.RefreshInput) *cores.Respo
 	}
 
 	return cores.NewResponse(http.StatusOK, respBody)
+}
+
+func (e *AuthEndpoint) Logout(userInfo *contexts.UserInfo, input inputmodels.LogoutInput) *cores.Response {
+	ctx := e.CtxFactory.NewContext(*userInfo)
+	defer ctx.Dispose() 
+
+	err := e.Service.Logout(ctx, dtos.LogoutDto(input))
+	if err != nil {
+		return NewErrorResponse(http.StatusInternalServerError, err)
+	}
+
+	return cores.NewResponse(http.StatusOK, nil)
 }

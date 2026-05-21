@@ -48,7 +48,7 @@ func GetUserLatestLoginTime(userID uint) (int64, error) {
 	ctx := context.Background()
 	key := fmt.Sprintf("user:latest_login_time:%d", userID)
 
-	// 🎯 標準改動：先拿字串，再轉為 int64，避免 go-redis 方法誤用噴錯
+	// 先拿字串，再轉為 int64，避免 go-redis 方法誤用噴錯
 	val, err := database.RDB.Get(ctx, key).Result()
 	if err != nil {
 		return 0, err
@@ -60,6 +60,17 @@ func GetUserLatestLoginTime(userID uint) (int64, error) {
 	}
 
 	return loginAt, nil
+}
+
+// DeleteUserLatestLoginTime 登出時，徹底清除該用戶的最新登入時間與 RefreshToken 紀錄
+func DeleteUserLatestLoginTime(userID uint) error {
+	ctx := context.Background()
+
+	timeKey := fmt.Sprintf("user:latest_login_time:%d", userID)
+	refreshKey := fmt.Sprintf("user:refresh_token:%d", userID)
+
+	// 使用 Redis 的 Del 同時刪除多個 Key，減少網路往返（RTT）
+	return database.RDB.Del(ctx, timeKey, refreshKey).Err()
 }
 
 // GetUserToken 獲取 Token 對應的用戶快取資訊
