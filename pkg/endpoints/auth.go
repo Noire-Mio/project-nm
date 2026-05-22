@@ -70,12 +70,13 @@ func (e *AuthEndpoint) RefreshToken(input inputmodels.RefreshInput) *cores.Respo
 
 func (e *AuthEndpoint) Logout(userInfo *contexts.UserInfo, input inputmodels.LogoutInput) *cores.Response {
 	ctx := e.CtxFactory.NewContext(*userInfo)
-	defer ctx.Dispose() 
+	defer ctx.Dispose()
 
 	err := e.Service.Logout(ctx, dtos.LogoutDto(input))
 	if err != nil {
 		return NewErrorResponse(http.StatusInternalServerError, err)
 	}
+	respBody := "登出"
 
-	return cores.NewResponse(http.StatusOK, nil)
+	return cores.NewResponse(http.StatusOK, respBody)
 }

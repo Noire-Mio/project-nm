@@ -38,6 +38,6 @@ func (m *WorkerManager) StartAll() {
 
 // StopAll 停機
 func (m *WorkerManager) StopAll() {
-	log.Println("[Worker Manager] 正在發送優雅停機訊號給所有背景工人...")
-	m.cancel() // 觸發 ctx.Done()，讓工人們優雅收尾
+	log.Println("[Worker Manager] 正在發送停機訊號...")
+	m.cancel() 
 }

@@ -21,7 +21,7 @@ func RunMigration(db *gorm.DB) error {
 	execute(db, "20260513-001", "建立User", public.CreateUserTable)
 
 	// 初始化 Tenant Schema
-	targetSchemas := []string{"tenant_001"}
+	targetSchemas := []string{"tenant_001","tenant_002","tenant_003"}
 	for _, schema := range targetSchemas {
 		log.Printf("[Migration] --- Starting Tenant Schema: %s ---", schema)
 
