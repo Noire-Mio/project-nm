@@ -16,6 +16,7 @@ type MemberEndpoint struct {
 }
 type IMemberEndpoint interface {
 	GetMember(userInfo *contexts.UserInfo) *cores.Response
+	GetMemberMQ(userInfo *contexts.UserInfo) *cores.Response
 }
 
 // GetMember
@@ -36,6 +37,23 @@ func (e *MemberEndpoint) GetMember(userInfo *contexts.UserInfo) *cores.Response 
 	defer ctx.Dispose() // 釋放context
 
 	Member, err := e.Service.GetMember(ctx)
+	if err != nil {
+		return NewErrorResponse(http.StatusInternalServerError, err)
+	}
+
+	respBody := viewmodels.MemberView{
+		ID:      Member.ID,
+		Userame: Member.Username,
+		Balance: Member.Balance,
+	}
+	return cores.NewResponse(http.StatusOK, respBody)
+}
+
+func (e *MemberEndpoint) GetMemberMQ(userInfo *contexts.UserInfo) *cores.Response {
+	ctx := e.CtxFactory.NewContext(*userInfo)
+	defer ctx.Dispose() // 釋放context
+
+	Member, err := e.Service.GetMemberMQ(ctx)
 	if err != nil {
 		return NewErrorResponse(http.StatusInternalServerError, err)
 	}

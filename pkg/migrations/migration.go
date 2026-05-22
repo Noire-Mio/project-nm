@@ -21,7 +21,7 @@ func RunMigration(db *gorm.DB) error {
 	execute(db, "20260513-001", "建立User", public.CreateUserTable)
 
 	// 初始化 Tenant Schema
-	targetSchemas := []string{"tenant_001","tenant_002","tenant_003"}
+	targetSchemas := []string{"tenant_001", "tenant_002", "tenant_003"}
 	for _, schema := range targetSchemas {
 		log.Printf("[Migration] --- Starting Tenant Schema: %s ---", schema)
 
@@ -39,6 +39,7 @@ func RunMigration(db *gorm.DB) error {
 		}
 
 		execute(db, "20260513-001", "建立會員表和交易表", schemas.CreateMemberTransactionTable)
+		execute(db, "20260522-001", "建立商品表", schemas.CreateProductTable)
 
 		log.Printf("[Migration] Schema %s completed", schema)
 	}
@@ -48,7 +49,6 @@ func RunMigration(db *gorm.DB) error {
 
 // execute 封裝判斷與執行邏輯
 func execute(db *gorm.DB, no string, describe string, up func(*gorm.DB) error) {
-	// 讀取該 Schema 下已執行的紀錄
 	executedRecords := loadRecords(db, "project-nm")
 
 	if executedRecords[no] {
@@ -68,7 +68,7 @@ func execute(db *gorm.DB, no string, describe string, up func(*gorm.DB) error) {
 
 func loadRecords(db *gorm.DB, systemName string) map[string]bool {
 	var nos []string
-	// 由於已經 SET search_path，這裡會讀取目前 Schema 的 migrate_records
+	// 讀取目前 Schema 的 migrate_records
 	db.Model(&MigrateRecord{}).Where("system_name = ?", systemName).Pluck("no", &nos)
 
 	recordMap := make(map[string]bool)

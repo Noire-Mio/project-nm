@@ -61,3 +61,5 @@ func (t *AuthTransport) Logout(permissions ...*cores.Permission) gin.HandlerFunc
 	}
 	return handler
 }
+
+

@@ -21,8 +21,8 @@ func getConfigByDefault() Config {
 			Password:     "password",
 			Database:     "sjdb",
 			SslMode:      "disable",
-			MaxOpenConns: 150,
-			MaxIdleConns: 50,
+			MaxOpenConns: 80,
+			MaxIdleConns: 30,
 			MaxLifetime:  30,
 		},
 		Redis: RedisConfig{

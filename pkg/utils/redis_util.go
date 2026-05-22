@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"project-nm/pkg/contexts"
 	"project-nm/pkg/database"
+	"project-nm/pkg/entities"
 	"strconv"
 	"time"
 
@@ -117,4 +118,43 @@ func GetServerRefreshToken(userID uint) (string, error) {
 	ctx := context.Background()
 	key := fmt.Sprintf("user:refresh_token:%d", userID)
 	return database.RDB.Get(ctx, key).Result()
+}
+
+// GetMemberCache 獲取會員資料快取
+func GetMemberCache(schema string, userID uint) (*entities.Member, error) {
+	ctx := context.Background()
+	key := fmt.Sprintf("member:cache:%s:%d", schema, userID)
+
+	val, err := database.RDB.Get(ctx, key).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	var member entities.Member
+	err = json.Unmarshal([]byte(val), &member)
+	if err != nil {
+		return nil, err
+	}
+
+	return &member, nil
+}
+
+// SetMemberCache 設置會員資料快取
+func SetMemberCache(schema string, member *entities.Member, expiration time.Duration) error {
+	ctx := context.Background()
+	key := fmt.Sprintf("member:cache:%s:%d", schema, member.ID)
+
+	data, err := json.Marshal(member)
+	if err != nil {
+		return err
+	}
+
+	return database.RDB.Set(ctx, key, string(data), expiration).Err()
+}
+
+// DeleteMemberCache 刪除會員資料快取
+func DeleteMemberCache(schema string, userID uint) error {
+	ctx := context.Background()
+	key := fmt.Sprintf("member:cache:%s:%d", schema, userID)
+	return database.RDB.Del(ctx, key).Err()
 }

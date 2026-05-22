@@ -28,7 +28,9 @@ func (t *Trans) AuthAPI(e *gin.Engine) {
 	e.POST("/sessions", t.AuthTrans.Login())
 	e.DELETE("/sessions", t.AuthTrans.Logout())
 	e.PUT("/sessions/refresh", t.AuthTrans.RefreshToken())
+
 }
 func (t *Trans) MemberAPI(e *gin.Engine) {
 	e.GET("member", t.MemberTrans.GetMember(cores.NewActionPermission(cores.ActionRead)))
+	e.GET("member-mq", t.MemberTrans.GetMemberMQ(cores.NewActionPermission(cores.ActionRead)))
 }

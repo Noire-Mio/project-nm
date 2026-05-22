@@ -27,3 +27,19 @@ func (t *MemberTransport) GetMember(permissions ...*cores.Permission) gin.Handle
 	}
 	return handler
 }
+func (t *MemberTransport) GetMemberMQ(permissions ...*cores.Permission) gin.HandlerFunc {
+	handler := func(c *gin.Context) {
+		userInfo, ok := HandleBearerTokenToUserInfo(c)
+		if !ok {
+			return
+		}
+
+		if !CheckPermissions(c, permissions) {
+			return
+		}
+
+		response := t.Endpoint.GetMemberMQ(userInfo)
+		cores.GenerateGinResponse(c, response)
+	}
+	return handler
+}

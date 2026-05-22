@@ -5,6 +5,7 @@ import (
 	"project-nm/pkg/contexts"
 	"project-nm/pkg/entities"
 	"project-nm/pkg/utils"
+	"strconv"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -12,59 +13,96 @@ import (
 
 type IMemberService interface {
 	GetMember(c *contexts.Member) (*entities.Member, error)
+	GetMemberMQ(c *contexts.Member) (*entities.Member, error)
 }
 
 type MemberService struct{}
 
-
 func (srv *MemberService) GetMember(c *contexts.Member) (*entities.Member, error) {
 	MemberSchema := c.UserInfo.Schema
 	id := c.UserInfo.UserID
-	initKey := fmt.Sprintf("tenant:member_init_flag:%s:%d", MemberSchema, id)
 
-	// 1. 依然先用快取擋住老用戶 (QPS 2000 刷進來，老用戶直接走這回傳)
-	_, err := utils.GetCache(initKey)
-	if err == nil {
-		_, member, _ := c.MemberRepo.Get(MemberSchema, id)
-		return member, nil
-	}
-
-
-	// 2. 查資料庫，如果真的沒資料，觸發 MQ 削峰
+	// 查詢資料庫確認使用者是否存在
 	isExist, member, err := c.MemberRepo.Get(MemberSchema, id)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("查詢資料庫失敗: %w", err)
 	}
 
+	// 新用戶同步寫入資料庫
 	if !isExist {
-		// 🎯 3. 核心亮點：不直接塞資料庫！改為組裝任務打包丟進 MQ
-		taskData := map[string]interface{}{
-			"user_id":  id,
-			"username": c.UserInfo.Name,
-			"schema":   MemberSchema,
-			
-		}
-
-		// 呼叫你 utils 寫好的 PushToStream
-		streamName := "stream:member_init_tasks"
-		err = utils.PushToStream(streamName, taskData)
-		if err != nil {
-			return nil, fmt.Errorf("系統繁忙，排隊失敗: %w", err)
-		}
-
-		// 🎯 4. 為了不讓前端拿到空資料，在記憶體直接組裝一個「預期中的會員」先回傳
-		// 前端畫面上會立刻顯示，而背後的資料庫此時正在排隊寫入
-		virtualMember := &entities.Member{
+		newMember := &entities.Member{
 			ID:       id,
 			Username: c.UserInfo.Name,
 			Balance:  decimal.NewFromInt(0),
 		}
 
-		// 順手把快取標記補上，防止這個使用者下一微秒重複發送排隊任務
-		_ = utils.SetCache(initKey, "1", 24*time.Hour)
+		// 寫入資料庫，底層自動依據 id 進行 OnConflict DoNothing 處理
+		err = c.MemberRepo.Create(MemberSchema, *newMember)
+		if err != nil {
+			return nil, fmt.Errorf("同步建立會員失敗: %w", err)
+		}
 
-		return virtualMember, nil
+		// 重新從資料庫撈取最新狀態
+		_, finalMember, err := c.MemberRepo.Get(MemberSchema, id)
+
+		if err != nil {
+			return nil, fmt.Errorf("建立後二次確認失敗: %w", err)
+		}
+		if finalMember == nil {
+			return newMember, nil
+		}
+
+		return finalMember, nil
 	}
 
 	return member, nil
+}
+
+func (srv *MemberService) GetMemberMQ(c *contexts.Member) (*entities.Member, error) {
+	MemberSchema := c.UserInfo.Schema
+	id := c.UserInfo.UserID
+	streamName := "stream:member_init_tasks"
+
+	// 先從 Redis 撈取會員快取資料
+	cachedMember, err := utils.GetMemberCache(MemberSchema, id)
+	if err == nil && cachedMember != nil {
+		return cachedMember, nil
+	}
+
+	// 如果 Redis 沒有快取，去 PostgreSQL 撈取資料
+	isExist, member, err := c.MemberRepo.Get(MemberSchema, id)
+	if err != nil {
+		return nil, fmt.Errorf("查詢資料庫失敗: %w", err)
+	}
+
+	// 資料庫存在回寫 Redis 快取，方便下一次秒讀
+	if isExist {
+		_ = utils.SetMemberCache(MemberSchema, member, 30*time.Minute)
+		return member, nil
+	}
+
+	newMember := &entities.Member{
+		ID:       id,
+		Username: c.UserInfo.Name,
+		Balance:  decimal.NewFromInt(0),
+	}
+
+	// 先寫入 Redis 快取
+	_ = utils.SetMemberCache(MemberSchema, newMember, 30*time.Minute)
+
+	// 封裝任務資訊
+	taskMap := map[string]interface{}{
+		"user_id":  strconv.FormatUint(uint64(id), 10),
+		"username": c.UserInfo.Name,
+		"schema":   MemberSchema,
+	}
+
+	err = utils.PushToStream(streamName, taskMap)
+	if err != nil {
+		// 萬一 MQ 寫入失敗，清除剛才回補的快取，確保資料一致性
+		_ = utils.DeleteMemberCache(MemberSchema, id)
+		return nil, fmt.Errorf("推入非同步建立佇列失敗: %w", err)
+	}
+
+	return newMember, nil
 }
