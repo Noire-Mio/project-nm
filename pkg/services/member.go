@@ -63,19 +63,16 @@ func (srv *MemberService) GetMemberMQ(c *contexts.Member) (*entities.Member, err
 	id := c.UserInfo.UserID
 	streamName := "stream:member_init_tasks"
 
-	// 先從 Redis 撈取會員快取資料
 	cachedMember, err := utils.GetMemberCache(MemberSchema, id)
 	if err == nil && cachedMember != nil {
 		return cachedMember, nil
 	}
 
-	// 如果 Redis 沒有快取，去 PostgreSQL 撈取資料
 	isExist, member, err := c.MemberRepo.Get(MemberSchema, id)
 	if err != nil {
 		return nil, fmt.Errorf("查詢資料庫失敗: %w", err)
 	}
 
-	// 資料庫存在回寫 Redis 快取，方便下一次秒讀
 	if isExist {
 		_ = utils.SetMemberCache(MemberSchema, member, 30*time.Minute)
 		return member, nil
@@ -87,10 +84,9 @@ func (srv *MemberService) GetMemberMQ(c *contexts.Member) (*entities.Member, err
 		Balance:  decimal.NewFromInt(0),
 	}
 
-	// 先寫入 Redis 快取
+	// 寫入快取
 	_ = utils.SetMemberCache(MemberSchema, newMember, 30*time.Minute)
 
-	// 封裝任務資訊
 	taskMap := map[string]interface{}{
 		"user_id":  strconv.FormatUint(uint64(id), 10),
 		"username": c.UserInfo.Name,
@@ -99,7 +95,6 @@ func (srv *MemberService) GetMemberMQ(c *contexts.Member) (*entities.Member, err
 
 	err = utils.PushToStream(streamName, taskMap)
 	if err != nil {
-		// 萬一 MQ 寫入失敗，清除剛才回補的快取，確保資料一致性
 		_ = utils.DeleteMemberCache(MemberSchema, id)
 		return nil, fmt.Errorf("推入非同步建立佇列失敗: %w", err)
 	}

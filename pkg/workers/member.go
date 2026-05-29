@@ -36,10 +36,10 @@ func (w *MemberInitWorker) Start(ctx context.Context) {
 			return
 
 		default:
-			
+
 			streams, err := database.RDB.XRead(ctx, &redis.XReadArgs{
-				Streams: []string{streamName, "0"}, 
-				Count:   100,                       
+				Streams: []string{streamName, "0"},
+				Count:   100,
 				Block:   2 * time.Second,
 			}).Result()
 

@@ -129,13 +129,12 @@ func (a *App) Serve(migrateDb *gorm.DB) {
 
 	// 將 ctx 傳入 WorkerManager，讓所有工人共享同一個關機燈號
 	workerManager := workers.NewWorkerManager(ctx)
-	
+
 	// 註冊你的會員初始
 	workerManager.Register(workers.NewMemberInitWorker(repositories.NewMemberRepo))
-	
+	workerManager.Register(workers.NewTradeWorker(repositories.NewTradeRepo, repositories.NewMemberRepo))
 
 	workerManager.StartAll()
-
 
 	errChan := make(chan error)
 
@@ -166,17 +165,18 @@ func (a *App) Serve(migrateDb *gorm.DB) {
 
 		// 關閉網路服務層 (gRPC & HTTP)
 		grpcServer.GracefulStop()
-		
+
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = httpServer.Shutdown(shutdownCtx)
-		
+
 		log.Println("[project-nm] All servers and workers closed cleanly. Goodbye!")
 
 	case err := <-errChan:
 		log.Printf("[Critical Error] %v", err)
 	}
 }
+
 // Serve 啟動單一埠號多協議服務
 // func (a *App) Serve(migrateDb *gorm.DB) {
 // 	a.Migrate(migrateDb)
@@ -283,3 +283,16 @@ func initMemberTransport(db *gorm.DB, converter *converter.Converter) *transport
 		},
 	}
 }
+
+// func initTradeTransport(db *gorm.DB, converter *converter.Converter) *transports.MemberTransport {
+// 	return &transports.MemberTransport{
+// 		Endpoint: &endpoints.MemberEndpoint{
+// 			Converter: converter,
+// 			Service:   &services.TradeService{},
+// 			CtxFactory: &contexts.MemberFactory{
+// 				DB:                db,
+// 				MemberRepoFactory: repositories.NewMemberRepo,
+// 			},
+// 		},
+// 	}
+// }
