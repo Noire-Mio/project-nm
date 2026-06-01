@@ -10,7 +10,6 @@ import (
 	"project-nm/pkg/contexts"
 	"project-nm/pkg/database"
 	"project-nm/pkg/entities"
-	"project-nm/pkg/repositories"
 	"project-nm/pkg/services/dtos"
 	"project-nm/pkg/utils"
 
@@ -18,16 +17,10 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-type TradeService struct {
-	TradeRepo repositories.ITrade
+type ITradeService interface {
+	ProcessOrder(c *contexts.Trade, dtos []dtos.TradeDto) (*entities.Transaction, error)
 }
-
-func NewTradeService(tradeRepo repositories.ITrade) *TradeService {
-	return &TradeService{
-		TradeRepo: tradeRepo,
-	}
-}
-
+type TradeService struct{}
 type validatedTask struct {
 	ProductID uint
 	Quantity  int64
@@ -36,7 +29,7 @@ type validatedTask struct {
 	TxType    string
 }
 
-func (srv *TradeService) ProcessOrder(c *contexts.Member, dtos []dtos.TradeDto) (*entities.Transaction, error) {
+func (srv *TradeService) ProcessOrder(c *contexts.Trade, dtos []dtos.TradeDto) (*entities.Transaction, error) {
 	if len(dtos) == 0 {
 		return nil, errors.New("INVALID_REQUEST: 無任何商品")
 	}
@@ -72,7 +65,7 @@ func (srv *TradeService) ProcessOrder(c *contexts.Member, dtos []dtos.TradeDto) 
 	}()
 
 	// 讀取價格
-	dbProducts, err := srv.TradeRepo.GetProductsByIDs(database.DB, productIDs)
+	dbProducts, err := c.TradeRepo.GetProductsByIDs(database.DB, productIDs)
 	if err != nil {
 		return nil, fmt.Errorf("PRODUCT_DB_ERROR: 透過倉庫撈取商品真實價格失敗: %w", err)
 	}

@@ -6,7 +6,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// 營業日期
+
 type Member struct {
 	Context
 	MemberRepo repositories.IMember

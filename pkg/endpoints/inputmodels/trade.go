@@ -1,6 +1,6 @@
-package dtos
+package inputmodels
 
-type TradeDto struct {
+type TradeInput struct {
 	ProductID uint   `json:"product_id"`
 	Quantity  int64  `json:"quantity"`
 	Type      string `json:"type"`

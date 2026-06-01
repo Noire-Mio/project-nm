@@ -6,20 +6,20 @@ import (
 	"net"
 	"net/http"
 	"os/signal"
-	"reflect"
-	"syscall"
-	"time"
-
 	"project-nm/pkg/configs"
 	"project-nm/pkg/contexts"
 	"project-nm/pkg/endpoints"
+	"project-nm/pkg/endpoints/converter"
+	grpcInProject "project-nm/pkg/grpc"
+	"project-nm/pkg/grpc/pb"
+	"project-nm/pkg/migrations"
 	"project-nm/pkg/repositories"
 	"project-nm/pkg/services"
-	"project-nm/pkg/workers"
-
-	"project-nm/pkg/endpoints/converter"
-	"project-nm/pkg/migrations"
 	"project-nm/pkg/transports"
+	"project-nm/pkg/workers"
+	"reflect"
+	"syscall"
+	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -116,9 +116,9 @@ func (a *App) Serve(migrateDb *gorm.DB) {
 	httpListener := m.Match(cmux.HTTP1())
 
 	grpcServer := grpc.NewServer()
-	// pb.RegisterPosBackendServer(grpcServer, &grpcInProject.PosBackendServer{
-	//  MemberWallet:  a.Trans.MemberWalletTrans.Endpoint,
-	// })
+	pb.RegisterProjectGrpcServer(grpcServer, &grpcInProject.ProjectNMServer{
+		TradeEndpoint: a.Trans.TradeTrans.Endpoint,
+	})
 
 	httpServer := &http.Server{
 		Handler: a.HttpHandler,

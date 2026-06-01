@@ -11,6 +11,7 @@ type Trans struct {
 	HCTrans     *HealthCheckTransport
 	AuthTrans   *AuthTransport
 	MemberTrans *MemberTransport
+	TradeTrans  *TradeTransport
 }
 
 func (t *Trans) MakeHttpHandler(e *gin.Engine) http.Handler {
