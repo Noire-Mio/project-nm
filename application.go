@@ -261,9 +261,11 @@ func (a *App) Serve(migrateDb *gorm.DB) {
 func initTransport(db *gorm.DB, converter *converter.Converter) *transports.Trans {
 	newAuthTransport := initAuthTransport(db, converter)
 	newMemberTransport := initMemberTransport(db, converter)
+	newTradeTransport := initTradeTransport(db, converter)
 	newTrans := &transports.Trans{
 		AuthTrans:   newAuthTransport,
 		MemberTrans: newMemberTransport,
+		TradeTrans:  newTradeTransport,
 	}
 	return newTrans
 }
@@ -294,15 +296,15 @@ func initMemberTransport(db *gorm.DB, converter *converter.Converter) *transport
 	}
 }
 
-// func initTradeTransport(db *gorm.DB, converter *converter.Converter) *transports.MemberTransport {
-// 	return &transports.MemberTransport{
-// 		Endpoint: &endpoints.MemberEndpoint{
-// 			Converter: converter,
-// 			Service:   &services.TradeService{},
-// 			CtxFactory: &contexts.MemberFactory{
-// 				DB:                db,
-// 				MemberRepoFactory: repositories.NewMemberRepo,
-// 			},
-// 		},
-// 	}
-// }
+func initTradeTransport(db *gorm.DB, converter *converter.Converter) *transports.TradeTransport {
+	return &transports.TradeTransport{
+		Endpoint: &endpoints.TradeEndpoint{
+			Converter: converter,
+			Service:   &services.TradeService{},
+			CtxFactory: &contexts.TradeFactory{
+				DB:               db,
+				TradeRepoFactory: repositories.NewTradeRepo,
+			},
+		},
+	}
+}

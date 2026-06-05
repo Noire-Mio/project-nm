@@ -23,6 +23,7 @@ type ITradeService interface {
 	ProcessOrder(ctx *contexts.Trade, dtos []dtos.TradeDto) (*pb.TradeGrpcResponse, error)
 }
 type TradeService struct{}
+
 type validatedTask struct {
 	ProductID uint
 	Quantity  int64
