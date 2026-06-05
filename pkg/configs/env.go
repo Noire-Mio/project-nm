@@ -42,10 +42,13 @@ func getConfigByDefault() Config {
 			AccessExpire:  3600,
 			RefreshExpire: 604800,
 		},
+		RelationalGRPC: RelationalGRPC{
+			UseTLSConnection: false,
+			ProjectNMUrl:     "127.0.0.1:8080",
+		},
 	}
 }
 
-// 輔助函式：讀取環境變數，若不存在則回傳預設值
 func getEnv(key, fallback string) string {
 	if value, ok := os.LookupEnv(key); ok {
 		return value

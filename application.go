@@ -11,6 +11,7 @@ import (
 	"project-nm/pkg/endpoints"
 	"project-nm/pkg/endpoints/converter"
 	grpcInProject "project-nm/pkg/grpc"
+	clients "project-nm/pkg/grpc/client"
 	"project-nm/pkg/grpc/pb"
 	"project-nm/pkg/migrations"
 	"project-nm/pkg/repositories"
@@ -115,6 +116,11 @@ func (a *App) Serve(migrateDb *gorm.DB) {
 	grpcListener := m.MatchWithWriters(cmux.HTTP2MatchHeaderFieldSendSettings("content-type", "application/grpc"))
 	httpListener := m.Match(cmux.HTTP1())
 
+	projectNMClient, err := clients.NewProjectNMGrpcClient()
+	if err != nil {
+		log.Fatalf("Failed to initialize gRPC Client: %v", err)
+	}
+
 	grpcServer := grpc.NewServer()
 	pb.RegisterProjectGrpcServer(grpcServer, &grpcInProject.ProjectNMServer{
 		TradeEndpoint: a.Trans.TradeTrans.Endpoint,
@@ -130,7 +136,7 @@ func (a *App) Serve(migrateDb *gorm.DB) {
 	// 將 ctx 傳入 WorkerManager，讓所有工人共享同一個關機燈號
 	workerManager := workers.NewWorkerManager(ctx)
 
-	// 註冊你的會員初始
+	// 註冊背景工人
 	workerManager.Register(workers.NewMemberInitWorker(repositories.NewMemberRepo))
 	workerManager.Register(workers.NewTradeWorker(repositories.NewTradeRepo, repositories.NewMemberRepo))
 
@@ -160,7 +166,7 @@ func (a *App) Serve(migrateDb *gorm.DB) {
 	case <-ctx.Done():
 		log.Println("[project-nm] Received shutdown signal. Initiating graceful shutdown...")
 
-		//  優先通知背景工人停止從 Redis Stream 搬新任務
+		// 通知背景工人停止從 Redis Stream 搬新任務
 		workerManager.StopAll()
 
 		// 關閉網路服務層 (gRPC & HTTP)
@@ -170,7 +176,11 @@ func (a *App) Serve(migrateDb *gorm.DB) {
 		defer cancel()
 		_ = httpServer.Shutdown(shutdownCtx)
 
-		log.Println("[project-nm] All servers and workers closed cleanly. Goodbye!")
+		if err := projectNMClient.Close(); err != nil {
+			log.Printf("[Warning] Failed to close gRPC Client connection cleanly: %v", err)
+		}
+
+		log.Println("[project-nm] All servers, clients and workers closed cleanly. Goodbye!")
 
 	case err := <-errChan:
 		log.Printf("[Critical Error] %v", err)

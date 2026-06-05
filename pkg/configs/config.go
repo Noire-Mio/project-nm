@@ -45,12 +45,17 @@ type TokenConfig struct {
 
 // Config 專案總合配置
 type Config struct {
-	ProjectID    string
-	ServerPort   string
-	JWTSign      string
-	RelationalDB RelationalDB
-	Redis        RedisConfig
-	Token        TokenConfig
+	ProjectID      string
+	ServerPort     string
+	JWTSign        string
+	RelationalDB   RelationalDB
+	Redis          RedisConfig
+	Token          TokenConfig
+	RelationalGRPC RelationalGRPC
+}
+type RelationalGRPC struct {
+	UseTLSConnection bool // 是否採用TLS連線
+	ProjectNMUrl     string
 }
 
 // SetConfig 初始化配置
