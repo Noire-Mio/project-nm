@@ -10,6 +10,7 @@ import (
 	"project-nm/pkg/contexts"
 	"project-nm/pkg/database"
 	"project-nm/pkg/entities"
+	"project-nm/pkg/grpc/pb"
 	"project-nm/pkg/services/dtos"
 	"project-nm/pkg/utils"
 
@@ -18,7 +19,8 @@ import (
 )
 
 type ITradeService interface {
-	ProcessOrder(c *contexts.Trade, dtos []dtos.TradeDto) (*entities.Transaction, error)
+	ExecuteOrder(c *contexts.Trade, dtos []dtos.TradeDto) (*entities.Transaction, error)
+	ProcessOrder(ctx *contexts.Trade, dtos []dtos.TradeDto) (*pb.TradeGrpcResponse, error)
 }
 type TradeService struct{}
 type validatedTask struct {
@@ -29,7 +31,7 @@ type validatedTask struct {
 	TxType    string
 }
 
-func (srv *TradeService) ProcessOrder(c *contexts.Trade, dtos []dtos.TradeDto) (*entities.Transaction, error) {
+func (srv *TradeService) ExecuteOrder(c *contexts.Trade, dtos []dtos.TradeDto) (*entities.Transaction, error) {
 	if len(dtos) == 0 {
 		return nil, errors.New("INVALID_REQUEST: 無任何商品")
 	}
@@ -201,4 +203,31 @@ func (srv *TradeService) compensateRedisStocks(ctx context.Context, dtos []dtos.
 		}
 	}
 	_, _ = pipe.Exec(ctx)
+}
+
+func (srv *TradeService) ProcessOrder(ctx *contexts.Trade, dtos []dtos.TradeDto) (*pb.TradeGrpcResponse, error) {
+	grpcItems := make([]*pb.TradeGrpcItem, 0, len(dtos))
+	for _, d := range dtos {
+		grpcItems = append(grpcItems, &pb.TradeGrpcItem{
+			ProductId: uint32(d.ProductID),
+			Quantity:  d.Quantity,
+			Type:      d.Type,
+		})
+	}
+
+	userInfo := ctx.UserInfo
+	grpcUserInfo := &pb.GRPCUserInfo{
+		UserId:   uint64(userInfo.UserID),
+		Identity: userInfo.Identity,
+		Name:     userInfo.Name,
+		Schema:   userInfo.Schema,
+	}
+
+	grpcResp, err := ctx.ProjectNMGrpcClient.ExecuteOrder(grpcUserInfo, grpcItems)
+	if err != nil {
+
+		return nil, fmt.Errorf("REMOTE_EXECUTE_FAILED: 遠端核心交易執行失敗: %w", err)
+	}
+
+	return grpcResp, nil
 }
