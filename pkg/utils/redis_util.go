@@ -112,7 +112,7 @@ func DeleteUserLatestLoginTime(userID uint) error {
 	return database.RDB.Del(ctx, timeKey, refreshKey).Err()
 }
 
-// SetMemberCache 設置完整的會員快取（內含基本資料與餘額）
+// SetMemberCache 設置完整的會員快取
 func SetMemberCache(schema string, member *entities.Member, expiration time.Duration) error {
 	ctx := context.Background()
 	key := fmt.Sprintf("member:cache:%s:%d", schema, member.ID)
@@ -151,7 +151,6 @@ func DeleteMemberCache(schema string, userID uint) error {
 	return database.RDB.Del(ctx, key).Err()
 }
 
-// 將 Lua 腳本限制為內部常數，不對外暴露字串，保持整潔
 const luaReleaseLockScript = `
 if redis.call('get', KEYS[1]) == ARGV[1] then
     return redis.call('del', KEYS[1])

@@ -70,76 +70,74 @@ func (w *TradeWorker) Start(ctx context.Context) {
 					quantity, _ := strconv.ParseInt(quantityStr, 10, 64)
 					amount, _ := decimal.NewFromString(amountStr)
 
-					dbCtx := repositories.NewGormDBContext(database.DB)
-					tradeRepo := w.TradeRepoFactory(dbCtx)
-					memberRepo := w.MemberRepoFactory(dbCtx)
+					err = database.DB.Transaction(func(tx *gorm.DB) error {
+						txCtx := repositories.NewGormDBContext(tx)
+						tradeRepo := w.TradeRepoFactory(txCtx)
+						memberRepo := w.MemberRepoFactory(txCtx)
 
-					maxRetries := 5
-					txSuccess := false
+						// 獲取商品最新狀態
+						products, err := tradeRepo.GetProductsByIDsForUpdate(schema, []uint{uint(productID)})
+						if err != nil {
+							return err
+						}
+						if len(products) == 0 {
+							return errors.New("PRODUCT_NOT_FOUND: 資料庫中找不到對應的商品實體")
+						}
+						product := &products[0]
 
-					for i := 0; i < maxRetries; i++ {
-						err = database.DB.Transaction(func(tx *gorm.DB) error {
-							product, err := tradeRepo.GetProduct(tx, uint(productID))
-							if err != nil {
-								return err
-							}
-
-							member, err := memberRepo.GetWithTx(tx, schema, uint(userID))
-							if err != nil {
-								return err
-							}
-
-							if txType == "pickup" {
-								member.Balance = member.Balance.Sub(amount)
-								product.Stock = product.Stock - quantity
-
-								if member.Balance.IsNegative() || product.Stock < 0 {
-									return errors.New("BUSINESS_LIMIT_EXCEEDED: 資料庫餘額或庫存不足")
-								}
-							} else if txType == "return" {
-								member.Balance = member.Balance.Add(amount)
-								product.Stock = product.Stock + quantity
-							} else {
-								return errors.New("INVALID_TX_TYPE: 未知的交易類型")
-							}
-
-							err = tradeRepo.UpdateProduct(tx, product)
-							if err != nil {
-								return err
-							}
-
-							err = memberRepo.UpdateMember(tx, schema, member)
-							if err != nil {
-								return err
-							}
-
-							history := entities.Transaction{
-								CreatedAt: time.Now(),
-								UpdatedAt: time.Now(),
-								MemberID:  uint(userID),
-								ProductID: uint(productID),
-								Quantity:  quantity,
-								Amount:    amount,
-								Type:      txType,
-								Status:    "success",
-							}
-							return tradeRepo.CreateTransaction(tx, history)
-						})
-
-						if err == nil {
-							txSuccess = true
-							break
+						// 會員讀取
+						exists, member, err := memberRepo.GetForUpdate(schema, uint(userID))
+						if err != nil {
+							return err
+						}
+						if !exists {
+							return errors.New("MEMBER_NOT_FOUND: 事務內部查無此會員實體")
 						}
 
-						if err.Error() == "OPTIMISTIC_LOCK_CONFLICT_PRODUCT" || err.Error() == "OPTIMISTIC_LOCK_CONFLICT_MEMBER" {
-							time.Sleep(5 * time.Millisecond)
-							continue
+						if txType == "pickup" {
+							member.Balance = member.Balance.Sub(amount)
+							product.Stock = product.Stock - quantity
+
+							if member.Balance.IsNegative() || product.Stock < 0 {
+								return errors.New("BUSINESS_LIMIT_EXCEEDED: 資料庫餘額或庫存不足")
+							}
+						} else if txType == "return" {
+							member.Balance = member.Balance.Add(amount)
+							product.Stock = product.Stock + quantity
+						} else {
+							return errors.New("INVALID_TX_TYPE: 未知的交易類型")
 						}
 
-						break
-					}
+						// 執行純粹的資料庫商品狀態落盤
+						err = tradeRepo.UpdateProduct(schema, product)
+						if err != nil {
+							return err
+						}
 
-					if !txSuccess {
+						// 執行純粹的資料庫會員資產落盤
+						err = memberRepo.UpdateMember(schema, member)
+						if err != nil {
+							return err
+						}
+
+						// 使用從訊息隊列中帶出的總金額建立流水帳防範改價導致的時空錯位
+						history := entities.Transaction{
+							CreatedAt: time.Now(),
+							UpdatedAt: time.Now(),
+							MemberID:  uint(userID),
+							ProductID: uint(productID),
+							Quantity:  quantity,
+							Amount:    amount,
+							Type:      txType,
+							Status:    "success",
+						}
+
+						// 寫入歷史流水帳紀錄
+						return tradeRepo.CreateTransaction(schema, history)
+					})
+
+					// 當落盤事務發生嚴重錯誤時執行前線快取資產的逆向還原補償
+					if err != nil {
 						log.Printf("[Trade Worker] 交易落盤重度衝突或失敗，啟動快取還原 (UserID: %d, Error: %v)", userID, err)
 
 						memberCache, cErr := utils.GetMemberCache(schema, uint(userID))
@@ -157,6 +155,7 @@ func (w *TradeWorker) Start(ctx context.Context) {
 						}
 					}
 
+					// 成功落盤或補償完成後將當前訊息自消息佇列中移除
 					database.RDB.XDel(ctx, streamName, message.ID)
 				}
 			}

@@ -1,7 +1,6 @@
 package contexts
 
 import (
-	grpc_client "project-nm/pkg/grpc/client"
 	"project-nm/pkg/repositories"
 
 	"gorm.io/gorm"
@@ -9,22 +8,22 @@ import (
 
 type Trade struct {
 	Context
-	ProjectNMGrpcClient grpc_client.IProjectNMClient
-	TradeRepo           repositories.ITrade
-	UserInfo            UserInfo
+	TradeRepo  repositories.ITrade
+	MemberRepo repositories.IMember
+	UserInfo   UserInfo
 }
 
 type TradeFactory struct {
-	DB                  *gorm.DB
-	ProjectNMGrpcClient *grpc_client.ProjectNMClient
-	TradeRepoFactory    repositories.TradeFactory
+	DB                *gorm.DB
+	TradeRepoFactory  repositories.TradeFactory
+	MemberRepoFactory repositories.MemberFactory
 }
 
 func (f *TradeFactory) NewContext(UserInfo UserInfo) *Trade {
 	dbCtx := repositories.NewGormDBContext(f.DB)
 	ctx := new(Trade)
-	ctx.ProjectNMGrpcClient = f.ProjectNMGrpcClient
 	ctx.TradeRepo = f.TradeRepoFactory(dbCtx)
+	ctx.MemberRepo = f.MemberRepoFactory(dbCtx)
 	ctx.UserInfo = UserInfo
 	ctx.AddDBContexts(dbCtx)
 	return ctx

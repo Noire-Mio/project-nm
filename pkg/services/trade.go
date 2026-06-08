@@ -10,6 +10,7 @@ import (
 	"project-nm/pkg/contexts"
 	"project-nm/pkg/database"
 	"project-nm/pkg/entities"
+	clients "project-nm/pkg/grpc/client"
 	"project-nm/pkg/grpc/pb"
 	"project-nm/pkg/services/dtos"
 	"project-nm/pkg/utils"
@@ -27,7 +28,7 @@ type TradeService struct{}
 type validatedTask struct {
 	ProductID uint
 	Quantity  int64
-	RealPrice decimal.Decimal
+	Price     decimal.Decimal
 	TotalCost decimal.Decimal
 	TxType    string
 }
@@ -50,7 +51,7 @@ func (srv *TradeService) ExecuteOrder(c *contexts.Trade, dtos []dtos.TradeDto) (
 		productIDs = append(productIDs, dto.ProductID)
 	}
 
-	// 分散式鎖
+	// 分散式鎖防禦機制
 	lockKey := fmt.Sprintf("lock:trade:%s:%d", schema, userID)
 	lockValue := strconv.FormatInt(time.Now().UnixNano(), 10)
 	lockTTL := 5 * time.Second
@@ -67,37 +68,40 @@ func (srv *TradeService) ExecuteOrder(c *contexts.Trade, dtos []dtos.TradeDto) (
 		_ = utils.ReleaseDistributedLock(ctx, lockKey, lockValue)
 	}()
 
-	// 讀取價格
-	dbProducts, err := c.TradeRepo.GetProductsByIDs(database.DB, productIDs)
+	// 透過倉庫執行悲觀鎖定並撈取商品最新狀態
+	dbProducts, err := c.TradeRepo.GetProductsByIDsForUpdate(schema, productIDs)
 	if err != nil {
-		return nil, fmt.Errorf("PRODUCT_DB_ERROR: 透過倉庫撈取商品真實價格失敗: %w", err)
+		return nil, fmt.Errorf("PRODUCT_DB_ERROR: 透過倉庫悲觀鎖定並撈取商品資料失敗: %w", err)
 	}
 
-	// 將撈出來的商品做成 Map
-	productPriceMap := make(map[uint]decimal.Decimal)
+	productMap := make(map[uint]entities.Product)
 	for _, p := range dbProducts {
-		productPriceMap[p.ID] = p.Price
+		productMap[p.ID] = p
 	}
 
-	// 從 Redis 讀取會員物件
-	memberCache, err := utils.GetMemberCache(schema, userID)
+	// 透過倉庫執行悲觀鎖定並撈取會員最新餘額
+	exists, memberEntity, err := c.MemberRepo.GetForUpdate(schema, userID)
 	if err != nil {
-		return nil, fmt.Errorf("CACHE_READ_FAILED: 獲取會員記憶體資料失敗，請重新載入帳號: %w", err)
+		return nil, fmt.Errorf("MEMBER_DB_SYSTEM_ERROR: 透過倉庫悲觀鎖定並讀取會員資產系統異常: %w", err)
 	}
-
-	originalBalance := memberCache.Balance
+	if !exists {
+		return nil, fmt.Errorf("MEMBER_NOT_FOUND: 資料庫中不存在此會員 (UserID: %d)", userID)
+	}
 
 	var totalAmount decimal.Decimal
-
 	tasks := make([]validatedTask, 0, len(dtos))
 
 	for _, dto := range dtos {
-		realPrice, exists := productPriceMap[dto.ProductID]
+		product, exists := productMap[dto.ProductID]
 		if !exists {
 			return nil, fmt.Errorf("PRODUCT_NOT_FOUND: 商品 ID %d 不存在於系統中", dto.ProductID)
 		}
 
-		itemTotalCost := realPrice.Mul(decimal.NewFromInt(dto.Quantity))
+		if dto.Type == "pickup" && product.Stock < dto.Quantity {
+			return nil, fmt.Errorf("PRODUCT_OUT_OF_STOCK: 商品 ID %d 在資料庫中庫存不足", dto.ProductID)
+		}
+
+		itemTotalCost := product.Price.Mul(decimal.NewFromInt(dto.Quantity))
 
 		if dto.Type == "pickup" {
 			totalAmount = totalAmount.Add(itemTotalCost)
@@ -110,61 +114,31 @@ func (srv *TradeService) ExecuteOrder(c *contexts.Trade, dtos []dtos.TradeDto) (
 		tasks = append(tasks, validatedTask{
 			ProductID: dto.ProductID,
 			Quantity:  dto.Quantity,
-			RealPrice: realPrice,
+			Price:     product.Price,
 			TotalCost: itemTotalCost,
 			TxType:    dto.Type,
 		})
 	}
 
-	// 餘額邊界審查
-	memberCache.Balance = memberCache.Balance.Sub(totalAmount)
-	if memberCache.Balance.IsNegative() {
+	// 會員錢包餘額邊界審查
+	memberEntity.Balance = memberEntity.Balance.Sub(totalAmount)
+	if memberEntity.Balance.IsNegative() {
 		return nil, errors.New("INSUFFICIENT_BALANCE: 總餘額不足以支付購物車商品，交易拒絕")
 	}
 
-	// Redis Pipeline 預扣庫存
-	pipe := database.RDB.Pipeline()
-	cmds := make(map[uint]*redis.IntCmd)
-
-	for _, task := range tasks {
-		productStockKey := fmt.Sprintf("product:stock:%d", task.ProductID)
-		if task.TxType == "pickup" {
-			cmds[task.ProductID] = pipe.DecrBy(ctx, productStockKey, task.Quantity)
-		} else if task.TxType == "return" {
-			cmds[task.ProductID] = pipe.IncrBy(ctx, productStockKey, task.Quantity)
-		}
-	}
-
-	_, err = pipe.Exec(ctx)
+	// 同步全新資產數據至唯讀快取
+	err = utils.SetMemberCache(schema, memberEntity, 30*time.Minute)
 	if err != nil {
-		srv.compensateRedisStocks(ctx, dtos)
-		return nil, fmt.Errorf("REDIS_PIPELINE_ERROR: 批量預扣庫存系統異常: %w", err)
+		return nil, fmt.Errorf("CACHE_WRITE_FAILED: 更新會員快取失敗: %w", err)
 	}
 
-	// 超賣判定
-	for productID, cmd := range cmds {
-		currentStock := cmd.Val()
-		if currentStock < 0 {
-			srv.compensateRedisStocks(ctx, dtos)
-			return nil, fmt.Errorf("OUT_OF_STOCK: 商品 ID %d 庫存不足，全結帳回滾", productID)
-		}
-	}
-
-	// 覆蓋會員全新餘額
-	err = utils.SetMemberCache(schema, memberCache, 30*time.Minute)
-	if err != nil {
-		srv.compensateRedisStocks(ctx, dtos)
-		return nil, fmt.Errorf("CACHE_WRITE_FAILED: 更新會員批量快取失敗，變更已撤回: %w", err)
-	}
-
-	// 寫入 MQ
+	// 將審查通過的任務包裝推入消息佇列解耦
 	mqPipe := database.RDB.Pipeline()
 	for _, task := range tasks {
 		taskMap := map[string]interface{}{
 			"user_id":    strconv.FormatUint(uint64(userID), 10),
 			"product_id": strconv.FormatUint(uint64(task.ProductID), 10),
 			"quantity":   strconv.FormatInt(task.Quantity, 10),
-			"price":      task.RealPrice.String(),
 			"amount":     task.TotalCost.String(),
 			"type":       task.TxType,
 			"schema":     schema,
@@ -177,12 +151,7 @@ func (srv *TradeService) ExecuteOrder(c *contexts.Trade, dtos []dtos.TradeDto) (
 
 	_, err = mqPipe.Exec(ctx)
 	if err != nil {
-		srv.compensateRedisStocks(ctx, dtos)
-
-		memberCache.Balance = originalBalance
-		_ = utils.SetMemberCache(schema, memberCache, 30*time.Minute)
-
-		return nil, fmt.Errorf("MQ_PUSH_FAILED: 推入批量交易佇列失敗，所有扣款與庫存變更已還原: %w", err)
+		return nil, fmt.Errorf("MQ_PUSH_FAILED: 推入批量交易佇列失敗: %w", err)
 	}
 
 	pendingTx := &entities.Transaction{
@@ -191,19 +160,6 @@ func (srv *TradeService) ExecuteOrder(c *contexts.Trade, dtos []dtos.TradeDto) (
 	}
 
 	return pendingTx, nil
-}
-
-func (srv *TradeService) compensateRedisStocks(ctx context.Context, dtos []dtos.TradeDto) {
-	pipe := database.RDB.Pipeline()
-	for _, dto := range dtos {
-		productStockKey := fmt.Sprintf("product:stock:%d", dto.ProductID)
-		if dto.Type == "pickup" {
-			pipe.IncrBy(ctx, productStockKey, dto.Quantity)
-		} else if dto.Type == "return" {
-			pipe.DecrBy(ctx, productStockKey, dto.Quantity)
-		}
-	}
-	_, _ = pipe.Exec(ctx)
 }
 
 func (srv *TradeService) ProcessOrder(ctx *contexts.Trade, dtos []dtos.TradeDto) (*pb.TradeGrpcResponse, error) {
@@ -224,11 +180,14 @@ func (srv *TradeService) ProcessOrder(ctx *contexts.Trade, dtos []dtos.TradeDto)
 		Schema:   userInfo.Schema,
 	}
 
-	grpcResp, err := ctx.ProjectNMGrpcClient.ExecuteOrder(grpcUserInfo, grpcItems)
+	grpcClient, err := clients.NewProjectNMGrpcClient()
 	if err != nil {
-
-		return nil, fmt.Errorf("REMOTE_EXECUTE_FAILED: 遠端核心交易執行失敗: %w", err)
+		return nil, fmt.Errorf("GRPC_CLIENT_INIT_FAILED: 建立 gRPC 客戶端失敗: %w", err)
 	}
 
+	grpcResp, err := grpcClient.ExecuteOrder(grpcUserInfo, grpcItems)
+	if err != nil {
+		return nil, fmt.Errorf("REMOTE_EXECUTE_FAILED: 遠端核心交易執行失敗: %w", err)
+	}
 	return grpcResp, nil
 }

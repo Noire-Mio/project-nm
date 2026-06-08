@@ -36,7 +36,7 @@ func (srv *MemberService) GetMember(c *contexts.Member) (*entities.Member, error
 			Balance:  decimal.NewFromInt(0),
 		}
 
-		// 寫入資料庫，底層自動依據 id 進行 OnConflict DoNothing 處理
+		// 寫入資料庫
 		err = c.MemberRepo.Create(MemberSchema, *newMember)
 		if err != nil {
 			return nil, fmt.Errorf("同步建立會員失敗: %w", err)

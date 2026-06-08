@@ -187,76 +187,6 @@ func (a *App) Serve(migrateDb *gorm.DB) {
 	}
 }
 
-// Serve 啟動單一埠號多協議服務
-// func (a *App) Serve(migrateDb *gorm.DB) {
-// 	a.Migrate(migrateDb)
-
-// 	cfg := configs.GetConfig()
-// 	port := cfg.ServerPort
-// 	if port == "" {
-// 		port = "8080"
-// 	}
-
-// 	log.Printf("[project-nm] %s is starting on port :%s", cfg.ProjectID, port)
-
-// 	listener, err := net.Listen("tcp", ":"+port)
-// 	if err != nil {
-// 		log.Fatalf("Failed to listen: %v", err)
-// 	}
-
-// 	m := cmux.New(listener)
-// 	m.SetReadTimeout(time.Second * 10)
-
-// 	grpcListener := m.MatchWithWriters(cmux.HTTP2MatchHeaderFieldSendSettings("content-type", "application/grpc"))
-// 	httpListener := m.Match(cmux.HTTP1())
-
-// 	grpcServer := grpc.NewServer()
-// 	// pb.RegisterPosBackendServer(grpcServer, &grpcInProject.PosBackendServer{
-// 	// 	MemberWallet:  a.Trans.MemberWalletTrans.Endpoint,
-// 	// })
-
-// 	httpServer := &http.Server{
-// 		Handler: a.HttpHandler,
-// 	}
-
-// 	// workers
-// 	workerManager := workers.NewWorkerManager()
-// 	workerManager.Register(workers.NewMemberInitWorker(repositories.NewMemberRepo))
-// 	workerManager.StartAll()
-
-// 	errChan := make(chan error)
-// 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-// 	defer stop()
-
-// 	go func() {
-// 		if err := grpcServer.Serve(grpcListener); err != nil && err != cmux.ErrListenerClosed {
-// 			errChan <- err
-// 		}
-// 	}()
-
-// 	go func() {
-// 		if err := httpServer.Serve(httpListener); err != nil && err != http.ErrServerClosed {
-// 			errChan <- err
-// 		}
-// 	}()
-
-// 	go func() {
-// 		if err := m.Serve(); err != nil {
-// 			errChan <- err
-// 		}
-// 	}()
-
-// 	select {
-// 	case <-ctx.Done():
-// 		log.Println("[project-nm] Received shutdown signal...")
-// 		grpcServer.GracefulStop()
-// 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-// 		defer cancel()
-// 		_ = httpServer.Shutdown(shutdownCtx)
-// 	case err := <-errChan:
-// 		log.Printf("[Critical Error] %v", err)
-// 	}
-// }
 
 func initTransport(db *gorm.DB, converter *converter.Converter) *transports.Trans {
 	newAuthTransport := initAuthTransport(db, converter)
@@ -302,8 +232,9 @@ func initTradeTransport(db *gorm.DB, converter *converter.Converter) *transports
 			Converter: converter,
 			Service:   &services.TradeService{},
 			CtxFactory: &contexts.TradeFactory{
-				DB:               db,
-				TradeRepoFactory: repositories.NewTradeRepo,
+				DB:                db,
+				TradeRepoFactory:  repositories.NewTradeRepo,
+				MemberRepoFactory: repositories.NewMemberRepo,
 			},
 		},
 	}

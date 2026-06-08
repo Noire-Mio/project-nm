@@ -36,7 +36,6 @@ func (w *MemberInitWorker) Start(ctx context.Context) {
 			return
 
 		default:
-
 			streams, err := database.RDB.XRead(ctx, &redis.XReadArgs{
 				Streams: []string{streamName, "0"},
 				Count:   100,
@@ -66,16 +65,18 @@ func (w *MemberInitWorker) Start(ctx context.Context) {
 						continue
 					}
 
+					// 建立新會員
 					newMember := entities.Member{
 						ID:       uint(userId),
 						Username: username,
-						Balance:  decimal.NewFromInt(0),
+						Balance:  decimal.NewFromInt(1000),
+						Version:  1, 
 					}
 
 					dbCtx := repositories.NewGormDBContext(database.DB)
 					memberRepo := w.MemberRepoFactory(dbCtx)
 
-					// 寫入資料庫
+					// 寫入指定租戶的資料庫中
 					err = memberRepo.Create(schema, newMember)
 					if err != nil {
 						log.Printf("[MQ Worker] 非同步資料庫寫入失敗 (Schema: %s, UserID: %d): %v", schema, userId, err)
@@ -83,7 +84,7 @@ func (w *MemberInitWorker) Start(ctx context.Context) {
 						log.Printf("[MQ Worker] 資料庫落盤成功 (Schema: %s, UserID: %d)", schema, userId)
 					}
 
-					// 任務處理完畢，從 Stream 中刪除該訊息
+					// 任務處理完畢自消息佇列中移除該訊息
 					database.RDB.XDel(ctx, streamName, message.ID)
 				}
 			}
