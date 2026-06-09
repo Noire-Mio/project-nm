@@ -43,7 +43,7 @@ func (e *TradeEndpoint) ExecuteOrder(request *pb.TradeGrpcRequest) (*pb.TradeGrp
 		})
 	}
 
-	tx, err := e.Service.ExecuteOrder(ctx, tradeDTOs)
+	tx, err := e.Service.ExecuteOrderV2(ctx, tradeDTOs)
 	if err != nil {
 		return nil, fmt.Errorf("CORE_TRANSACTION_ERROR: 核心扣款程序失敗: %w", err)
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"project-nm/pkg/contexts"
 	"project-nm/pkg/endpoints"
 	"project-nm/pkg/endpoints/converter"
+	"project-nm/pkg/entities"
 	grpcInProject "project-nm/pkg/grpc"
 	clients "project-nm/pkg/grpc/client"
 	"project-nm/pkg/grpc/pb"
@@ -93,9 +95,12 @@ func (a *App) Migrate(db *gorm.DB) {
 		panic(err)
 	}
 }
-
 func (a *App) Serve(migrateDb *gorm.DB) {
+
 	a.Migrate(migrateDb)
+	
+	targetSchemas := []string{"tenant_001", "tenant_002", "tenant_003"}
+	a.PreheatProducts(migrateDb, a.RDB, targetSchemas)
 
 	cfg := configs.GetConfig()
 	port := cfg.ServerPort
@@ -103,11 +108,11 @@ func (a *App) Serve(migrateDb *gorm.DB) {
 		port = "8080"
 	}
 
-	log.Printf("[project-nm] %s is starting on port :%s", cfg.ProjectID, port)
+	log.Printf("[INFO] [%s] Server is starting on port :%s", cfg.ProjectID, port)
 
 	listener, err := net.Listen("tcp", ":"+port)
 	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
+		log.Fatalf("[CRITICAL] Failed to listen: %v", err)
 	}
 
 	m := cmux.New(listener)
@@ -118,7 +123,7 @@ func (a *App) Serve(migrateDb *gorm.DB) {
 
 	projectNMClient, err := clients.NewProjectNMGrpcClient()
 	if err != nil {
-		log.Fatalf("Failed to initialize gRPC Client: %v", err)
+		log.Fatalf("[CRITICAL] Failed to initialize gRPC Client: %v", err)
 	}
 
 	grpcServer := grpc.NewServer()
@@ -133,10 +138,7 @@ func (a *App) Serve(migrateDb *gorm.DB) {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// 將 ctx 傳入 WorkerManager，讓所有工人共享同一個關機燈號
 	workerManager := workers.NewWorkerManager(ctx)
-
-	// 註冊背景工人
 	workerManager.Register(workers.NewMemberInitWorker(repositories.NewMemberRepo))
 	workerManager.Register(workers.NewTradeWorker(repositories.NewTradeRepo, repositories.NewMemberRepo))
 
@@ -164,12 +166,8 @@ func (a *App) Serve(migrateDb *gorm.DB) {
 
 	select {
 	case <-ctx.Done():
-		log.Println("[project-nm] Received shutdown signal. Initiating graceful shutdown...")
-
-		// 通知背景工人停止從 Redis Stream 搬新任務
+		log.Println("[INFO] Received shutdown signal. Initiating graceful shutdown...")
 		workerManager.StopAll()
-
-		// 關閉網路服務層 (gRPC & HTTP)
 		grpcServer.GracefulStop()
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -177,16 +175,73 @@ func (a *App) Serve(migrateDb *gorm.DB) {
 		_ = httpServer.Shutdown(shutdownCtx)
 
 		if err := projectNMClient.Close(); err != nil {
-			log.Printf("[Warning] Failed to close gRPC Client connection cleanly: %v", err)
+			log.Printf("[WARNING] Failed to close gRPC Client connection cleanly: %v", err)
 		}
 
-		log.Println("[project-nm] All servers, clients and workers closed cleanly. Goodbye!")
+		log.Println("[INFO] All servers, clients and workers closed cleanly. Goodbye!")
 
 	case err := <-errChan:
-		log.Printf("[Critical Error] %v", err)
+		log.Printf("[CRITICAL] %v", err)
 	}
 }
 
+// PreheatProducts 商品預載 
+func (a *App) PreheatProducts(db *gorm.DB, rdb *redis.Client, schemas []string) {
+	ctx := context.Background()
+	var totalProductsWarmedUp int
+
+	log.Println("[INFO] Cache preheating initialized.")
+
+	checkSQL := `
+        SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_schema = ? AND table_name = 'product'
+        );
+    `
+
+	for _, schema := range schemas {
+		var tableExists bool
+
+		// 核心防線：重試等待資料表完全 Commit
+		for retry := 1; retry <= 10; retry++ {
+			err := db.Raw(checkSQL, schema).Scan(&tableExists).Error
+			if err == nil && tableExists {
+				break
+			}
+			log.Printf("[INFO] Waiting for schema %s migration to complete... (Retry %d/10)", schema, retry)
+			time.Sleep(1 * time.Second)
+		}
+
+		if !tableExists {
+			log.Printf("[ERROR] Skipping preheat for schema %s: Table 'product' does not exist after maximum retries.", schema)
+			continue
+		}
+
+		var products []entities.Product
+
+		tableName := fmt.Sprintf("%s.product", schema)
+		if err := db.Table(tableName).Find(&products).Error; err != nil {
+			log.Printf("[WARNING] Failed to fetch products for schema %s: %v", schema, err)
+			continue
+		}
+
+		for _, p := range products {
+			// 商品基本資料快取 (Hash 格式)
+			productKey := fmt.Sprintf("cache:product:%s:%d", schema, p.ID)
+			_ = rdb.HMSet(ctx, productKey, map[string]interface{}{
+				"price": p.Price.String(),
+			}).Err()
+
+			// 商品獨立的原子庫存計數器 (String 格式，供 Lua 減法操作)
+			stockKey := fmt.Sprintf("cache:product:stock:%s:%d", schema, p.ID)
+			_ = rdb.Set(ctx, stockKey, p.Stock, 0).Err()
+
+			totalProductsWarmedUp++
+		}
+	}
+
+	log.Printf("[INFO] Cache preheating completed. Total schemas checked: %d, Total products loaded: %d", len(schemas), totalProductsWarmedUp)
+}
 
 func initTransport(db *gorm.DB, converter *converter.Converter) *transports.Trans {
 	newAuthTransport := initAuthTransport(db, converter)

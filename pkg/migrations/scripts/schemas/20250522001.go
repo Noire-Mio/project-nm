@@ -22,10 +22,10 @@ func CreateProductTable(db *gorm.DB) error {
 
 func seedDefaultProducts(db *gorm.DB) error {
 	defaultProducts := []entities.Product{
-		{ID: 1, Name: "蘋果", Stock: 100000, Price: decimal.NewFromFloat(50.0), Version: 0},
-		{ID: 2, Name: "香蕉", Stock: 100000, Price: decimal.NewFromFloat(30.0), Version: 0},
-		{ID: 3, Name: "西瓜", Stock: 100000, Price: decimal.NewFromFloat(150.0), Version: 0},
-		{ID: 4, Name: "哈密瓜", Stock: 100000, Price: decimal.NewFromFloat(250.0), Version: 0},
+		{ID: 1, Name: "蘋果", Stock: 500, Price: decimal.NewFromFloat(50.0), Version: 0},
+		{ID: 2, Name: "香蕉", Stock: 500, Price: decimal.NewFromFloat(30.0), Version: 0},
+		{ID: 3, Name: "西瓜", Stock: 500, Price: decimal.NewFromFloat(150.0), Version: 0},
+		{ID: 4, Name: "哈密瓜", Stock: 500, Price: decimal.NewFromFloat(250.0), Version: 0},
 	}
 
 	for _, p := range defaultProducts {
